@@ -1,21 +1,23 @@
 import 'dart:io';
-
 import 'package:flutter/material.dart';
 
 import 'package:flutter_acrylic/flutter_acrylic.dart';
 import 'package:bitsdojo_window/bitsdojo_window.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  Acrylic.initialize();
+  await Window.initialize();
+  if (Platform.isWindows) {
+    await Window.hideWindowControls();
+  }
   runApp(MyApp());
   if (Platform.isWindows) {
     doWhenWindowReady(() {
-      final initialSize = Size(960, 720);
-      appWindow.minSize = Size(720, 480);
-      appWindow.size = initialSize;
-      appWindow.alignment = Alignment.center;
-      appWindow.show();
+      appWindow
+        ..minSize = Size(640, 360)
+        ..size = Size(720, 540)
+        ..alignment = Alignment.center
+        ..show();
     });
   }
 }
@@ -30,10 +32,34 @@ class MyApp extends StatelessWidget {
       theme: ThemeData(
         splashFactory: InkRipple.splashFactory,
       ),
-      darkTheme: ThemeData.dark(),
+      darkTheme: ThemeData.dark().copyWith(
+        splashFactory: InkRipple.splashFactory,
+      ),
       themeMode: ThemeMode.dark,
       home: MyAppBody(),
     );
+  }
+}
+
+enum InterfaceBrightness {
+  light,
+  dark,
+  auto,
+}
+
+extension InterfaceBrightnessExtension on InterfaceBrightness {
+  bool getIsDark(BuildContext? context) {
+    if (this == InterfaceBrightness.light) return false;
+    if (this == InterfaceBrightness.auto) {
+      if (context == null) return true;
+      return MediaQuery.of(context).platformBrightness == Brightness.dark;
+    }
+
+    return true;
+  }
+
+  Color getForegroundColor(BuildContext? context) {
+    return getIsDark(context) ? Colors.white : Colors.black;
   }
 }
 
@@ -45,8 +71,10 @@ class MyAppBody extends StatefulWidget {
 }
 
 class MyAppBodyState extends State<MyAppBody> {
-  AcrylicEffect effect = AcrylicEffect.transparent;
-  Color color = Platform.isWindows ? Color(0x00222222) : Colors.transparent;
+  WindowEffect effect = WindowEffect.transparent;
+  Color color = Platform.isWindows ? Color(0xCC222222) : Colors.transparent;
+  InterfaceBrightness brightness =
+      Platform.isMacOS ? InterfaceBrightness.auto : InterfaceBrightness.dark;
 
   @override
   void initState() {
@@ -54,125 +82,382 @@ class MyAppBodyState extends State<MyAppBody> {
     this.setWindowEffect(this.effect);
   }
 
-  void setWindowEffect(AcrylicEffect? value) {
-    Acrylic.setEffect(effect: value!, gradientColor: this.color);
+  void setWindowEffect(WindowEffect? value) {
+    Window.setEffect(
+      effect: value!,
+      color: this.color,
+      dark: brightness == InterfaceBrightness.dark,
+    );
+    if (Platform.isMacOS) {
+      if (brightness != InterfaceBrightness.auto) {
+        Window.overrideMacOSBrightness(
+            dark: brightness == InterfaceBrightness.dark);
+      }
+    }
     this.setState(() => this.effect = value);
+  }
+
+  void setBrightness(InterfaceBrightness brightness) {
+    this.brightness = brightness;
+    if (this.brightness == InterfaceBrightness.dark) {
+      color = Platform.isWindows ? Color(0xCC222222) : Colors.transparent;
+    } else {
+      color = Platform.isWindows ? Color(0x22DDDDDD) : Colors.transparent;
+    }
+    this.setWindowEffect(this.effect);
   }
 
   @override
   Widget build(BuildContext context) {
-    return Stack(
-      children: [
-        Scaffold(
-          appBar: AppBar(
-            title: Text('Flutter Acrylic'),
-          ),
-          backgroundColor: Colors.transparent,
-          body: Center(
-            child: Column(
+    // The [TitlebarSafeArea] widget is required when running on macOS and enabling
+    // the full-size content view using [Window.setFullSizeContentView]. It ensures
+    // that its child is not covered by the macOS title bar.
+    return TitlebarSafeArea(
+      child: Stack(
+        children: [
+          Scaffold(
+            backgroundColor: Colors.transparent,
+            body: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Card(
-                    elevation: 4.0,
-                    color: Colors.black,
-                    child: Container(
-                      height: 5 * 48.0,
-                      width: 240.0,
-                      child: Column(
-                        children: AcrylicEffect.values
-                            .map(
-                              (effect) => RadioListTile<AcrylicEffect>(
-                                  title: Text(
-                                      effect
-                                              .toString()
-                                              .split('.')
-                                              .last[0]
-                                              .toUpperCase() +
-                                          effect
-                                              .toString()
-                                              .split('.')
-                                              .last
-                                              .substring(1),
-                                      style: TextStyle(fontSize: 14.0)),
-                                  value: effect,
-                                  groupValue: this.effect,
-                                  onChanged: this.setWindowEffect),
-                            )
-                            .toList(),
+                WindowTitleBar(
+                  brightness: brightness,
+                ),
+                Padding(
+                  padding: EdgeInsets.only(
+                    left: 20.0,
+                    bottom: 20.0,
+                    top: 12.0,
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Flutter Acrylic',
+                        style: TextStyle(
+                            fontSize: 32.0,
+                            color: brightness.getForegroundColor(context)),
                       ),
-                    )),
-                SizedBox(
-                  height: 32.0,
-                ),
-                ElevatedButton(
-                  onPressed: Window.enterFullscreen,
-                  child: Container(
-                    alignment: Alignment.center,
-                    height: 28.0,
-                    width: 140.0,
-                    child: Text('Enter Fullscreen'),
+                      SizedBox(height: 4.0),
+                      Text('github.com/alexmercerind/flutter_acrylic',
+                          style: TextStyle(
+                              color: brightness.getForegroundColor(context))),
+                    ],
                   ),
                 ),
-                SizedBox(
-                  height: 16.0,
+                Expanded(
+                  child: generateEffectMenu(context),
                 ),
-                ElevatedButton(
-                  onPressed: Window.exitFullscreen,
-                  child: Container(
-                    alignment: Alignment.center,
-                    height: 28.0,
-                    width: 140.0,
-                    child: Text('Exit Fullscreen'),
-                  ),
+                Divider(
+                  height: 1.0,
+                  color: brightness == InterfaceBrightness.dark
+                      ? Colors.white12
+                      : Colors.black12,
                 ),
-                SizedBox(
-                  height: 32.0,
-                ),
-                Text('More features coming soon!',
-                    style: TextStyle(fontSize: 14.0, color: Colors.white)),
+                generateActionButtonBar(context),
+                generateMacOSActionButtonBar(context),
               ],
             ),
           ),
+        ],
+      ),
+    );
+  }
+
+  ButtonBar generateActionButtonBar(BuildContext context) {
+    return ButtonBar(
+      alignment: MainAxisAlignment.start,
+      children: [
+        ElevatedButton(
+          onPressed: () => setState(() {
+            setBrightness(
+              brightness == InterfaceBrightness.dark
+                  ? InterfaceBrightness.light
+                  : InterfaceBrightness.dark,
+            );
+          }),
+          child: Text(
+            'Dark: ${(() {
+              switch (brightness) {
+                case InterfaceBrightness.light:
+                  return 'light';
+                case InterfaceBrightness.dark:
+                  return 'dark';
+                default:
+                  return 'auto';
+              }
+            })()}',
+            style: TextStyle(
+              color: Colors.white,
+            ),
+          ),
         ),
-        Platform.isWindows
-            ? WindowTitleBarBox(
-                child: MoveWindow(
-                  child: Container(
-                    width: MediaQuery.of(context).size.width,
-                    height: 56.0,
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: [
-                        MinimizeWindowButton(
-                          colors: WindowButtonColors(
-                              iconNormal: Colors.white,
-                              mouseOver: Colors.white.withOpacity(0.1),
-                              mouseDown: Colors.white.withOpacity(0.2),
-                              iconMouseOver: Colors.white,
-                              iconMouseDown: Colors.white),
-                        ),
-                        MaximizeWindowButton(
-                          colors: WindowButtonColors(
-                              iconNormal: Colors.white,
-                              mouseOver: Colors.white.withOpacity(0.1),
-                              mouseDown: Colors.white.withOpacity(0.2),
-                              iconMouseOver: Colors.white,
-                              iconMouseDown: Colors.white),
-                        ),
-                        CloseWindowButton(
-                          colors: WindowButtonColors(
-                              mouseOver: Color(0xFFD32F2F),
-                              mouseDown: Color(0xFFB71C1C),
-                              iconNormal: Colors.white,
-                              iconMouseOver: Colors.white),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              )
-            : Container(),
+        ElevatedButton(
+          onPressed: Window.hideWindowControls,
+          child: Text(
+            'Hide controls',
+            style: TextStyle(
+              color: Colors.white,
+            ),
+          ),
+        ),
+        ElevatedButton(
+          onPressed: Window.showWindowControls,
+          child: Text(
+            'Show controls',
+            style: TextStyle(
+              color: Colors.white,
+            ),
+          ),
+        ),
+        ElevatedButton(
+          onPressed: Window.enterFullscreen,
+          child: Text(
+            'Enter fullscreen',
+            style: TextStyle(
+              color: Colors.white,
+            ),
+          ),
+        ),
+        ElevatedButton(
+          onPressed: Window.exitFullscreen,
+          child: Text(
+            'Exit fullscreen',
+            style: TextStyle(
+              color: Colors.white,
+            ),
+          ),
+        ),
       ],
     );
+  }
+
+  Widget generateMacOSActionButtonBar(BuildContext context) {
+    if (!Platform.isMacOS) return const SizedBox();
+
+    return Column(children: [
+      Padding(
+        padding: const EdgeInsets.only(bottom: 4.0, top: 12.0),
+        child: Text('macOS actions:',
+            style: TextStyle(
+              fontSize: 16.0,
+              color: brightness.getForegroundColor(context),
+              fontWeight: FontWeight.bold,
+            )),
+      ),
+      Padding(
+        padding: const EdgeInsets.all(8.0),
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: [
+              ['Set Document Edited', () => Window.setDocumentEdited()],
+              ['Set Document Unedited', () => Window.setDocumentUnedited()],
+              [
+                'Set Represented Filename',
+                () => Window.setRepresentedFilename('filename')
+              ],
+              ['Set Represented Url', () => Window.setRepresentedUrl('url')],
+              ['Hide Title', () => Window.hideTitle()],
+              ['Show Title', () => Window.showTitle()],
+              [
+                'Make Titlebar Transparent',
+                () => Window.makeTitlebarTransparent()
+              ],
+              ['Make Titlebar Opaque', () => Window.makeTitlebarOpaque()],
+              [
+                'Enable Full Size Content View',
+                () => Window.enableFullSizeContentView()
+              ],
+              [
+                'Disable Full Size Content View',
+                () => Window.disableFullSizeContentView()
+              ],
+              ['Zoom Window', () => Window.zoomWindow()],
+              ['Unzoom Window', () => Window.unzoomWindow()],
+              ['Hide Zoom Button', () => Window.hideZoomButton()],
+              ['Show Zoom Button', () => Window.showZoomButton()],
+              ['Hide Miniaturize Button', () => Window.hideMiniaturizeButton()],
+              ['Show Miniaturize Button', () => Window.showMiniaturizeButton()],
+              ['Hide Close Button', () => Window.hideCloseButton()],
+              ['Show Close Button', () => Window.showCloseButton()],
+              ['Enable Zoom Button', () => Window.enableZoomButton()],
+              ['Disable Zoom Button', () => Window.disableZoomButton()],
+              [
+                'Enable Miniaturize Button',
+                () => Window.enableMiniaturizeButton()
+              ],
+              [
+                'Disable Miniaturize Button',
+                () => Window.disableMiniaturizeButton()
+              ],
+              ['Enable Close Button', () => Window.enableCloseButton()],
+              ['Disable Close Button', () => Window.disableCloseButton()],
+              [
+                'Set Window Alpha Value to 0.5',
+                () => Window.setWindowAlphaValue(0.5)
+              ],
+              [
+                'Set Window Alpha Value to 0.75',
+                () => Window.setWindowAlphaValue(0.75)
+              ],
+              [
+                'Set Window Alpha Value to 1.0',
+                () => Window.setWindowAlphaValue(1.0)
+              ],
+              [
+                'Set Window Background Color to Default Color',
+                () => Window.setWindowBackgroundColorToDefaultColor()
+              ],
+              [
+                'Set Window Background Color to Clear',
+                () => Window.setWindowBackgroundColorToClear()
+              ],
+              [
+                'Set Blur View State to Active',
+                () => Window.setBlurViewState(MacOSBlurViewState.active)
+              ],
+              [
+                'Set Blur View State to Inactive',
+                () => Window.setBlurViewState(MacOSBlurViewState.inactive)
+              ],
+              [
+                'Set Blur View State to Follows Window Active State',
+                () => Window.setBlurViewState(
+                    MacOSBlurViewState.followsWindowActiveState)
+              ],
+            ]
+                .map((e) => MaterialButton(
+                      child: Text(
+                        e[0] as String,
+                        style: TextStyle(
+                            color: brightness.getForegroundColor(context)),
+                      ),
+                      onPressed: e[1] as void Function(),
+                    ))
+                .toList(),
+          ),
+        ),
+      ),
+    ]);
+  }
+
+  SingleChildScrollView generateEffectMenu(BuildContext context) {
+    return SingleChildScrollView(
+      child: Theme(
+        data: brightness.getIsDark(context)
+            ? ThemeData.dark()
+            : ThemeData.light(),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: (Platform.isWindows
+                  ? WindowEffect.values.take(7)
+                  : WindowEffect.values)
+              .map(
+                (effect) => RadioListTile<WindowEffect>(
+                  title: Text(effect.toString(),
+                      style: TextStyle(
+                        fontSize: 14.0,
+                        color: brightness.getForegroundColor(context),
+                      )),
+                  value: effect,
+                  groupValue: this.effect,
+                  onChanged: this.setWindowEffect,
+                ),
+              )
+              .toList(),
+        ),
+      ),
+    );
+  }
+}
+
+class WindowTitleBar extends StatelessWidget {
+  final InterfaceBrightness brightness;
+  const WindowTitleBar({Key? key, required this.brightness}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return Platform.isWindows
+        ? Container(
+            width: MediaQuery.of(context).size.width,
+            height: 32.0,
+            color: Colors.transparent,
+            child: MoveWindow(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Expanded(
+                    child: Container(),
+                  ),
+                  MinimizeWindowButton(
+                    colors: WindowButtonColors(
+                      iconNormal: brightness == InterfaceBrightness.light
+                          ? Colors.black
+                          : Colors.white,
+                      iconMouseDown: brightness == InterfaceBrightness.light
+                          ? Colors.black
+                          : Colors.white,
+                      iconMouseOver: brightness == InterfaceBrightness.light
+                          ? Colors.black
+                          : Colors.white,
+                      normal: Colors.transparent,
+                      mouseOver: brightness == InterfaceBrightness.light
+                          ? Colors.black.withOpacity(0.04)
+                          : Colors.white.withOpacity(0.04),
+                      mouseDown: brightness == InterfaceBrightness.light
+                          ? Colors.black.withOpacity(0.08)
+                          : Colors.white.withOpacity(0.08),
+                    ),
+                  ),
+                  MaximizeWindowButton(
+                    colors: WindowButtonColors(
+                      iconNormal: brightness == InterfaceBrightness.light
+                          ? Colors.black
+                          : Colors.white,
+                      iconMouseDown: brightness == InterfaceBrightness.light
+                          ? Colors.black
+                          : Colors.white,
+                      iconMouseOver: brightness == InterfaceBrightness.light
+                          ? Colors.black
+                          : Colors.white,
+                      normal: Colors.transparent,
+                      mouseOver: brightness == InterfaceBrightness.light
+                          ? Colors.black.withOpacity(0.04)
+                          : Colors.white.withOpacity(0.04),
+                      mouseDown: brightness == InterfaceBrightness.light
+                          ? Colors.black.withOpacity(0.08)
+                          : Colors.white.withOpacity(0.08),
+                    ),
+                  ),
+                  CloseWindowButton(
+                    onPressed: () {
+                      appWindow.close();
+                    },
+                    colors: WindowButtonColors(
+                      iconNormal: brightness == InterfaceBrightness.light
+                          ? Colors.black
+                          : Colors.white,
+                      iconMouseDown: brightness == InterfaceBrightness.light
+                          ? Colors.black
+                          : Colors.white,
+                      iconMouseOver: brightness == InterfaceBrightness.light
+                          ? Colors.black
+                          : Colors.white,
+                      normal: Colors.transparent,
+                      mouseOver: brightness == InterfaceBrightness.light
+                          ? Colors.black.withOpacity(0.04)
+                          : Colors.white.withOpacity(0.04),
+                      mouseDown: brightness == InterfaceBrightness.light
+                          ? Colors.black.withOpacity(0.08)
+                          : Colors.white.withOpacity(0.08),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          )
+        : Container();
   }
 }
